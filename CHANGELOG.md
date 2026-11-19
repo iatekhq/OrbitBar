@@ -2,6 +2,10 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.5.8
+
+- The Windows taskbar no longer flashes for a moment when the mouse reaches the bottom of the screen (noticeable with Task Manager open): OrbitBar now hides it again the instant Windows shows it
+
 ## 5.5.7
 
 - Fullscreen VLC (and other players): grabbing the seek bar or opening a menu no longer brings the bar up over the video's controls

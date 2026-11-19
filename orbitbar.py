@@ -126,7 +126,7 @@ APP_NAME = "OrbitBar"
 APP_PUBLISHER = "IATEK"
 # Where releases are published, e.g. "yourname/OrbitBar". Empty = the update check is off.
 GITHUB_REPO = "iatekhq/OrbitBar"
-APP_VERSION = "5.5.7"
+APP_VERSION = "5.5.8"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -9562,6 +9562,12 @@ class Bar(QWidget):
     def on_window_event(self, event=None, hwnd=None):
         if event is None:
             self.schedule_refresh(30)
+            return
+        if event == 0x8002 and self.taskbar.hidden \
+                and class_name(hwnd) in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+            # Windows slid its own taskbar back in (mouse at the bottom edge, especially with an admin window
+            # like Task Manager in front): hide it again this instant, not at the next 0.7 s check
+            self.taskbar.enforce()
             return
         if event == 0x0003:                                   # focus moved
             self.check_fullscreen()
