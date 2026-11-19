@@ -126,7 +126,7 @@ APP_NAME = "OrbitBar"
 APP_PUBLISHER = "IATEK"
 # Where releases are published, e.g. "yourname/OrbitBar". Empty = the update check is off.
 GITHUB_REPO = "iatekhq/OrbitBar"
-APP_VERSION = "5.5.3"
+APP_VERSION = "5.5.4"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -7672,18 +7672,118 @@ Start-Process -FilePath (Join-Path $Dst 'OrbitBar.exe') -WorkingDirectory $Dst
 """
 
 
+def mark_update_attempted(p):
+    """Remember that installing `p` was tried, so a failed install can't keep the bar from starting."""
+    try:
+        with open(PENDING_PATH, "w", encoding="utf-8") as f:
+            json.dump(dict(p, attempted=True), f)
+    except OSError:
+        pass
+
+
 def run_updater(p):
-    """Start the helper that installs update `p` as soon as this process (and its watchdog) has exited."""
+    """Start the installer for update `p`; it waits until this process (and its watchdog) has exited.
+    From 5.5.4 on, the downloaded OrbitBar.exe installs itself (no PowerShell: 5.5.2/5.5.3 used a hidden
+    PowerShell script, which antivirus software can silently block)."""
     import subprocess
+    mark_update_attempted(p)
+    flags = 0x00000008 | 0x00000200 | 0x08000000           # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
+    app_dir = os.path.dirname(sys.executable)
+    new_exe = os.path.join(p["src"], "OrbitBar.exe")
+    if version_tuple(p["version"]) >= (5, 5, 4):
+        subprocess.Popen([new_exe, "--install-update", f"--from={p['src']}", f"--to={app_dir}",
+                          f"--wait={os.getpid()}", f"--ver={p['version']}"],
+                         creationflags=flags, close_fds=True, cwd=p["src"])
+        return
     os.makedirs(UPDATE_DIR, exist_ok=True)
     script = os.path.join(UPDATE_DIR, "install-update.ps1")
     with open(script, "w", encoding="utf-8-sig") as f:
         f.write(UPDATER_PS)
-    app_dir = os.path.dirname(sys.executable)
     subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
                       "-File", script, "-WaitPid", str(os.getpid()), "-Src", p["src"], "-Dst", app_dir,
                       "-Log", LOG_PATH, "-Ver", p["version"]],
-                     creationflags=0x00000008 | 0x00000200 | 0x08000000, close_fds=True, cwd=UPDATE_DIR)
+                     creationflags=flags, close_fds=True, cwd=UPDATE_DIR)
+
+
+def install_update_here():
+    """`OrbitBar.exe --install-update --from=<new> --to=<program folder> --wait=<pid>`: run by the old version,
+    from the downloaded copy. Wait for the old bar (and its watchdog) to close, swap the files in, start it."""
+    import shutil
+    import subprocess
+    arg = lambda k: next((a.split("=", 1)[1] for a in sys.argv if a.startswith(f"--{k}=")), "")  # noqa: E731
+    src, dst, ver = arg("from"), arg("to"), arg("ver")
+    try:
+        wait_pid = int(arg("wait") or 0)
+    except ValueError:
+        wait_pid = 0
+
+    def note(msg):
+        try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            with open(LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} updater: {msg}\n")
+        except OSError:
+            pass
+
+    if not (src and dst and os.path.isfile(os.path.join(src, "OrbitBar.exe")) and os.path.isdir(dst)):
+        note(f"nothing to install (from {src!r} to {dst!r})")
+        return
+    if wait_pid:
+        try:
+            psutil.Process(wait_pid).wait(timeout=30)
+        except Exception:
+            pass
+    me = os.getpid()
+    dst_n = os.path.normcase(os.path.abspath(dst)) + os.sep
+    for _ in range(60):                                   # the crash watchdog is another OrbitBar.exe from there
+        busy = []
+        for pr in psutil.process_iter(["pid", "exe"]):
+            try:
+                exe = pr.info.get("exe") or ""
+                if pr.info["pid"] != me and os.path.normcase(exe).startswith(dst_n):
+                    busy.append(pr)
+            except Exception:
+                continue
+        if not busy:
+            break
+        time.sleep(0.5)
+    new_int, old_int = os.path.join(src, "_internal"), os.path.join(dst, "_internal")
+    backup = os.path.join(dst, "_internal.old")
+    ok = False
+    try:
+        shutil.rmtree(backup, ignore_errors=True)
+        if os.path.isdir(old_int):
+            os.replace(old_int, backup)                   # keep the old libraries until the new ones are in
+        shutil.copytree(new_int, old_int)
+        for name in os.listdir(src):                      # top-level files: OrbitBar.exe, README, ...
+            s_path = os.path.join(src, name)
+            if os.path.isfile(s_path):
+                for attempt in range(10):
+                    try:
+                        shutil.copy2(s_path, os.path.join(dst, name))
+                        break
+                    except OSError:
+                        if attempt == 9:
+                            raise
+                        time.sleep(0.5)
+        ok = True
+    except Exception as ex:
+        note(f"couldn't install OrbitBar {ver} into {dst}: {ex} - keeping the old version")
+        if os.path.isdir(backup):                         # put the old libraries back
+            shutil.rmtree(old_int, ignore_errors=True)
+            try:
+                os.replace(backup, old_int)
+            except OSError:
+                pass
+    if ok:
+        shutil.rmtree(backup, ignore_errors=True)
+        note(f"installed OrbitBar {ver}")
+    try:
+        os.remove(PENDING_PATH)                           # done, or given up: never retried at every start
+    except OSError:
+        pass
+    subprocess.Popen([os.path.join(dst, "OrbitBar.exe")], cwd=dst, close_fds=True,
+                     creationflags=0x00000008 | 0x00000200)
 
 
 def fetch_public_ip():
@@ -9946,6 +10046,9 @@ def cleanup():
 
 def main():
     global _bar, _taskbar
+    if "--install-update" in sys.argv:
+        install_update_here()
+        return
     if "--version" in sys.argv:
         print(f"{APP_NAME} {APP_VERSION} by {APP_PUBLISHER}  ({SCRIPT_PATH})")
         return
@@ -10008,7 +10111,15 @@ def main():
         return
     if getattr(sys, "frozen", False) and not takeover:
         p = pending_update()                  # downloaded last time: install it before the bar even appears
-        if p and load_config().get("auto_update", True) and can_self_update():
+        if p and p.get("attempted"):
+            # installing it already failed once: start normally (the next update check offers it again)
+            setup_logging()
+            print(f"update {p['version']}: the last install didn't finish - starting {APP_VERSION} instead")
+            try:
+                os.remove(PENDING_PATH)
+            except OSError:
+                pass
+        elif p and load_config().get("auto_update", True) and can_self_update():
             setup_logging()
             print(f"--- installing OrbitBar {p['version']} (downloaded earlier) ---")
             run_updater(p)
