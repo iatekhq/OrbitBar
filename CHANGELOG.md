@@ -2,6 +2,11 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.5.3
+
+- Testing automatic updates
+
+
 ## 5.5.2
 
 - **Updates install themselves.** When a new version is published, OrbitBar downloads it in the background, checks it against GitHub's own SHA-256 checksum, and installs it the next time it starts. Or click the notification to restart and update right away. Turn it off in ⚙ Settings → Alerts
