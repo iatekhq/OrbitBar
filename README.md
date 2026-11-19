@@ -28,7 +28,7 @@ OrbitBar has:
   - left-click focuses the window, minimizes it if it's already focused, or cycles through the app's windows
   - middle-click opens a new window
   - right-click shows the window list, Pin/Unpin, and Close
-- **Media**: shows what's actually playing. With several YouTube tabs or players open, it picks the one that's playing, not the one Windows guesses. Prev / play-pause / next go straight to that player; next/previous grey out when the page has no playlist. **Hover** it for a card with cover art, title, artist, app, live progress and big controls. If other tabs or apps have media, they're listed too: click one to control it from the bar
+- **Media**: shows what's actually playing. With several YouTube tabs or players open, it picks the one that's playing, not the one Windows guesses. Prev / play-pause / next go straight to that player; next/previous grey out when the page has no playlist. **Hover** it for a card with cover art, title, artist, app, live progress and big controls. **Click or drag the progress bar** to jump anywhere in the song (scroll over it for 5-second steps), use **−10 / +10**, or **⟲** to start the song over. If other tabs or apps have media, they're listed too: click one to control it from the bar
 - **Stats**: a CPU sparkline, RAM, **GPU** (works for NVIDIA, AMD and Intel, using the same counters as Task Manager), network ↓↑ and battery. Hover GPU for the card name, VRAM and busiest engine. Click the stats for top CPU, GPU and memory apps and disk space
 - **Volume**: scroll to change it, click for a slider, middle-click to mute
 - **Security shield**: green ✓ (protected), amber ! (check something) or red ✕ (at risk). It covers Microsoft Defender or any other antivirus registered with Windows Security (Bitdefender, ESET…), real-time and tamper protection, how old the virus definitions are, the last quick scan, and the firewall for the Domain, Private and Public networks. Click it for details and shortcuts to Windows Security. It rechecks every 5 minutes in the background, and a notification appears if protection turns off
@@ -121,7 +121,7 @@ For students who want to read or change the code. Needs Python 3.10+.
 git clone https://github.com/iatekhq/OrbitBar.git
 cd OrbitBar
 py -m pip install -r requirements.txt
-python orbitbar.py           # starts in the background; you can close the terminal
+py orbitbar.py               # starts in the background; you can close the terminal
 ```
 
 Everything is in one file, `orbitbar.py`. With the downloaded version, use `OrbitBar.exe` instead of `python orbitbar.py` in the commands below.

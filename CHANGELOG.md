@@ -2,6 +2,12 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.5.1
+
+- Jump around in a song: in the media card (hover the music on the bar), click or drag the progress bar, scroll over it for 5-second steps, or use −10 / +10
+- ⟲ plays the current song from the beginning
+- Works with players that allow it (YouTube and most sites in Chrome/Edge/Firefox, most music apps); when a player doesn't, the controls are greyed out
+
 ## 5.5.0
 
 First public release by IATEK.

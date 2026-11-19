@@ -119,14 +119,14 @@ from PySide6.QtGui import (QAction, QColor, QDrag, QFont, QFontMetricsF, QImage,
 from PySide6.QtWidgets import (
     QApplication, QLayout, QSizePolicy, QCheckBox, QComboBox, QFileIconProvider, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMenu, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea,
-    QSlider, QSpinBox, QVBoxLayout, QWidget,
+    QSlider, QSpinBox, QStyle, QVBoxLayout, QWidget,
 )
 
 APP_NAME = "OrbitBar"
 APP_PUBLISHER = "IATEK"
 # Where releases are published, e.g. "yourname/OrbitBar". Empty = the update check is off.
 GITHUB_REPO = "iatekhq/OrbitBar"
-APP_VERSION = "5.5.0"
+APP_VERSION = "5.5.1"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -1076,12 +1076,13 @@ class MediaWorker(QThread):
         info = s.get_playback_info()
         ctl = info.controls
         status = int(info.playback_status)
-        pos = dur = 0.0
+        pos = dur = start = 0.0
         stamp = time.time()
         try:
             tl = s.get_timeline_properties()
-            pos = self._seconds(tl.position)
-            dur = self._seconds(tl.end_time) - self._seconds(tl.start_time)
+            start = self._seconds(tl.start_time)
+            pos = self._seconds(tl.position) - start
+            dur = self._seconds(tl.end_time) - start
             upd = tl.last_updated_time
             if upd is not None and hasattr(upd, "timestamp"):
                 stamp = upd.timestamp()
@@ -1093,6 +1094,7 @@ class MediaWorker(QThread):
                 "title": title, "artist": p.artist or "", "album": p.album_title or "",
                 "playing": status == PLAYING, "can_next": bool(ctl.is_next_enabled),
                 "can_prev": bool(ctl.is_previous_enabled), "position": pos, "duration": max(0.0, dur),
+                "can_seek": bool(getattr(ctl, "is_playback_position_enabled", False)), "start": start,
                 "stamp": stamp, "props": p}
 
     async def _thumbnail(self, props):
@@ -1162,6 +1164,7 @@ class MediaWorker(QThread):
                 out = None
                 if cur:
                     out = {k: v for k, v in cur.items() if k not in ("session", "props")}
+                    out["stamp_local"] = time.time()
                     out["thumb"] = self.thumb
                     out["others"] = [{"key": x["key"], "app": x["app"], "title": x["title"], "playing": x["playing"]}
                                      for x in snaps]
@@ -1175,6 +1178,11 @@ class MediaWorker(QThread):
                 try:
                     if cmd == "select":
                         self.pinned = self.chosen = arg
+                    elif cmd == "seek":
+                        if target is not None:          # arg = seconds from the start of the track
+                            ticks = int((cur.get("start", 0.0) + max(0.0, float(arg))) * 10_000_000)
+                            if not await target.try_change_playback_position_async(ticks):
+                                print("media seek: this player doesn't accept seeking")
                     elif cmd == "toggle" and target is not None:
                         self.pinned = None          # pressing play/pause on something un-pins a card pick
                         ok = await target.try_toggle_play_pause_async()
@@ -1898,6 +1906,38 @@ def fmt_clock(secs):
     return f"{h}:{rem // 60:02d}:{rem % 60:02d}" if h else f"{rem // 60}:{rem % 60:02d}"
 
 
+class SeekSlider(QSlider):
+    """The song's progress bar, but you can grab it: click anywhere to jump there, drag to scrub,
+    scroll the mouse wheel to go 5 s back/forward. Values are tenths of a second."""
+    seek = Signal(float)                 # seconds from the start of the track
+    scrubbing = Signal(float)            # while dragging: where the handle is (for the time label)
+
+    def __init__(self):
+        super().__init__(Qt.Horizontal)
+        self.setRange(0, 0)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.sliderMoved.connect(lambda v: self.scrubbing.emit(v / 10))
+        self.sliderReleased.connect(lambda: self.seek.emit(self.value() / 10))
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and self.maximum() > 0:
+            # jump straight to the click (a plain slider only steps towards it), then keep dragging from there
+            v = QStyle.sliderValueFromPosition(self.minimum(), self.maximum(), int(e.position().x()), self.width())
+            self.setValue(v)
+            self.scrubbing.emit(v / 10)
+        super().mousePressEvent(e)
+
+    def wheelEvent(self, e):
+        if self.maximum() <= 0:
+            return
+        step = 50 if e.angleDelta().y() < 0 else -50      # wheel down = forward, like the calendar
+        v = max(0, min(self.maximum(), self.value() + step))
+        self.setValue(v)
+        self.seek.emit(v / 10)
+        e.accept()
+
+
 class MediaCard(QWidget):
     """Hover card: cover art, title, artist, app, live progress, controls, other media sessions."""
 
@@ -1936,10 +1976,9 @@ class MediaCard(QWidget):
         info.addStretch(1)
         top.addLayout(info, 1)
         v.addLayout(top)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 1000)
-        self.progress.setTextVisible(False)
-        self.progress.setFixedHeight(5)
+        self.progress = SeekSlider()
+        self.progress.seek.connect(self.seek_to)
+        self.progress.scrubbing.connect(lambda secs: self.t_pos.setText(fmt_clock(secs)))
         v.addWidget(self.progress)
         times = QHBoxLayout()
         self.t_pos, self.t_dur = lbl("", "dim"), lbl("", "dim")
@@ -1949,13 +1988,20 @@ class MediaCard(QWidget):
         v.addLayout(times)
         ctl = QHBoxLayout()
         ctl.addStretch(1)
+        self.b_restart = glyph_button("\uE72C", "Play from the beginning", 15)
+        self.b_back = text_button("−10", "seek", "Back 10 seconds")
         self.b_prev = glyph_button(G["prev"], "Previous", 15)
         self.b_play = glyph_button(G["play"], "Play / pause", 20)
         self.b_next = glyph_button(G["next"], "Next", 15)
+        self.b_fwd = text_button("+10", "seek", "Forward 10 seconds")
+        self.b_restart.clicked.connect(lambda: self.seek_to(0))
+        self.b_back.clicked.connect(lambda: self.seek_by(-10))
+        self.b_fwd.clicked.connect(lambda: self.seek_by(10))
         self.b_prev.clicked.connect(lambda: media.command("prev"))
         self.b_play.clicked.connect(lambda: media.command("toggle"))
         self.b_next.clicked.connect(lambda: media.command("next"))
-        for b in (self.b_prev, self.b_play, self.b_next):
+        self.seek_buttons = (self.b_restart, self.b_back, self.b_fwd)
+        for b in (self.b_restart, self.b_back, self.b_prev, self.b_play, self.b_next, self.b_fwd):
             ctl.addWidget(b)
         ctl.addStretch(1)
         v.addLayout(ctl)
@@ -1973,6 +2019,7 @@ class MediaCard(QWidget):
         self.show_timer = QTimer(self, singleShot=True, interval=350, timeout=self.open)
         self.hide_timer = QTimer(self, singleShot=True, interval=350, timeout=self.close_now)
         self._others_sig = None
+        self._seek_hold = None           # (key, seconds, time) right after a seek, until the player catches up
 
     # hover plumbing (same pattern as window previews)
     def hover(self):
@@ -2019,6 +2066,12 @@ class MediaCard(QWidget):
         self.b_prev.setEnabled(d["can_prev"])
         self.b_next.setToolTip("Next" if d["can_next"] else "This player has no next track")
         self.b_prev.setToolTip("Previous" if d["can_prev"] else "This player has no previous track")
+        can_seek = d.get("can_seek", False) and d["duration"] > 0
+        self.progress.setEnabled(can_seek)
+        self.progress.setToolTip("Click or drag to jump · scroll for 5 s steps" if can_seek
+                                 else "This player doesn't allow jumping around")
+        for b in self.seek_buttons:
+            b.setEnabled(can_seek)
         pm = self.media.art_pixmap(84)
         if pm is not None:
             self.art.setPixmap(pm)
@@ -2043,19 +2096,52 @@ class MediaCard(QWidget):
                 self.adjustSize()
         self.update_progress()
 
+    def current_pos(self):
+        d = self.media.data
+        if not d:
+            return 0.0
+        dur = d["duration"]
+        pos = d["position"] + ((time.time() - d["stamp"]) if d["playing"] else 0)
+        hold = self._seek_hold
+        if hold:
+            key, target, t0 = hold
+            moved = target + ((time.time() - t0) if d["playing"] else 0)
+            if key != d["key"] or time.time() - t0 > 4 or abs(pos - moved) < 2:
+                self._seek_hold = None          # the player has caught up (or the song changed)
+            else:
+                pos = moved                     # players report the new spot a moment late: don't jump back
+        return max(0.0, min(pos, dur) if dur else pos)
+
+    def seek_to(self, secs):
+        d = self.media.data
+        if not d or not d.get("can_seek") or d["duration"] <= 0:
+            return
+        secs = max(0.0, min(float(secs), d["duration"] - 1))
+        self._seek_hold = (d["key"], secs, time.time())
+        self.media.command("seek", secs)
+        self.update_progress()
+
+    def seek_by(self, delta):
+        self.seek_to(self.current_pos() + delta)
+
     def update_progress(self):
         d = self.media.data
         if not d:
             return
         dur = d["duration"]
-        pos = d["position"] + ((time.time() - d["stamp"]) if d["playing"] else 0)
-        pos = min(pos, dur) if dur else pos
         live = dur <= 0
         self.progress.setVisible(not live)
         self.t_dur.setText("" if live else fmt_clock(dur))
-        self.t_pos.setText("Live / no timeline" if live else fmt_clock(pos))
-        if not live:
-            self.progress.setValue(int(1000 * pos / dur) if dur else 0)
+        if live:
+            self.t_pos.setText("Live / no timeline")
+            return
+        if self.progress.isSliderDown():        # the user is dragging: leave the handle and label alone
+            return
+        pos = self.current_pos()
+        self.t_pos.setText(fmt_clock(pos))
+        if self.progress.maximum() != int(dur * 10):
+            self.progress.setRange(0, int(dur * 10))
+        self.progress.setValue(int(pos * 10))
 
 
 class SystemSource(QObject):
@@ -2305,7 +2391,7 @@ class Media(Pill):
         self.worker.start()
 
     def command(self, cmd, arg=None):
-        if not self.worker.send(cmd, arg) and cmd != "select":       # no media API: fall back to media keys
+        if not self.worker.send(cmd, arg) and cmd not in ("select", "seek"):   # no media API: media keys
             send_keys({"toggle": "playpause", "next": "next", "prev": "prev"}[cmd])
 
     def enterEvent(self, e):
@@ -8624,6 +8710,10 @@ class Bar(QWidget):
             QPushButton:hover {{ background: {rgba(T["hover"])}; }}
             QPushButton:disabled {{ color: {DIM}; }}
             QPushButton[class="glyph"] {{ font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets"; }}
+            QPushButton[class="seek"] {{ padding: 8px 8px; border-radius: 18px; border: none;
+                                         background: transparent; font-weight: 600; color: {DIM}; }}
+            QPushButton[class="seek"]:hover {{ background: {rgba(T["hover"])}; color: {TEXT}; }}
+            QPushButton[class="seek"]:disabled {{ color: {rgba(T["border"])}; }}
             QPushButton[class="vol"] {{ font-family: "Segoe Fluent Icons", "Segoe UI"; padding: 6px 10px; }}
             QPushButton[class="chip"] {{ background: {rgba(T["pill"])}; padding: 6px 10px; }}
             QPushButton[class="chip"]:hover {{ background: {rgba(T["hover"])}; }}
