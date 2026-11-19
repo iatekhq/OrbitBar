@@ -126,7 +126,7 @@ APP_NAME = "OrbitBar"
 APP_PUBLISHER = "IATEK"
 # Where releases are published, e.g. "yourname/OrbitBar". Empty = the update check is off.
 GITHUB_REPO = "iatekhq/OrbitBar"
-APP_VERSION = "5.5.5"
+APP_VERSION = "5.5.6"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -5904,6 +5904,7 @@ class SettingsWindow(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         page = QWidget()
         page.setObjectName("settingsPage")
+        self.page, self.scroll, self._fitted = page, scroll, False
         self.form = QVBoxLayout(page)
         self.form.setContentsMargins(22, 18, 22, 18)
         self.form.setSpacing(8)
@@ -5946,6 +5947,28 @@ class SettingsWindow(QWidget):
             QScrollBar::handle:vertical {{ background: {rgba(T['hover'])}; border-radius: 4px; min-height: 30px; }}
             QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
         """)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if not self._fitted:                  # once styles and font sizes are known: open wide enough for every row
+            self._fitted = True
+            QTimer.singleShot(0, self.fit_to_content)
+
+    def fit_to_content(self):
+        """Open as wide as the widest row needs (bigger text sizes need more room), never wider or taller than
+        the screen. Before, it always opened 500 px wide and the right side of the rows was cut off."""
+        self.page.adjustSize()
+        need_w = self.page.minimumSizeHint().width()
+        need_w = max(need_w, self.page.sizeHint().width())
+        sb = self.scroll.verticalScrollBar().sizeHint().width()
+        scr = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        w = min(max(520, need_w + sb + 12), int(scr.width() * 0.9))
+        h = min(max(self.height(), 700), int(scr.height() * 0.88))
+        self.resize(w, h)
+        self.setMinimumWidth(min(need_w + sb + 12, int(scr.width() * 0.9)))
+        g = self.frameGeometry()
+        g.moveCenter(scr.center())            # keep it on screen after growing
+        self.move(g.topLeft())
 
     # ---- helpers
     def head(self, text):

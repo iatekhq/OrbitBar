@@ -2,9 +2,11 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.5.6
+
+- The Settings window opens wide enough for every row: with Large or bigger text sizes, the dropdowns and accent colours used to be cut off on the right
 
 ## 5.5.5
-
 
 - Testing automatic updates
 
