@@ -1,0 +1,89 @@
+# Builds OrbitBar for Windows and publishes it as a GitHub Release.
+#
+#   Publish a version:  set APP_VERSION in orbitbar.py (e.g. "5.5.0"), add a "## 5.5.0" section to
+#                       CHANGELOG.md, commit, then push a matching tag:  git tag v5.5.0 && git push origin v5.5.0
+#   Test a build only:  Actions tab -> "Build release" -> Run workflow (the zip is attached to the run, no release)
+name: Build release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Tag matches APP_VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path orbitbar.py -Pattern '^APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} doesn't match APP_VERSION $v in orbitbar.py" }
+
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Smoke test (the program starts and exits)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist/OrbitBar/OrbitBar.exe -ArgumentList "--version" -PassThru
+          if (-not $p.WaitForExit(90000)) {
+            $p.Kill()
+            throw "OrbitBar.exe didn't exit: a module is probably missing from the build (run ./build.ps1 -Console locally to see the error)"
+          }
+          if ($p.ExitCode -ne 0) { throw "OrbitBar.exe --version failed with exit code $($p.ExitCode)" }
+
+      - name: Zip
+        id: zip
+        shell: pwsh
+        run: |
+          $name = "OrbitBar-${{ github.ref_name }}-windows.zip"
+          Compress-Archive -Path dist/OrbitBar -DestinationPath $name
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          $lines = Get-Content CHANGELOG.md
+          $start = [array]::IndexOf($lines, "## $v")
+          $notes = @()
+          if ($start -ge 0) {
+            for ($i = $start + 1; $i -lt $lines.Count -and -not $lines[$i].StartsWith("## "); $i++) { $notes += $lines[$i] }
+          }
+          if (-not ($notes -join "").Trim()) { $notes = @("See CHANGELOG.md.") }
+          $notes += @("", "**Install:** download the zip below, unzip it to a folder you'll keep, run ``OrbitBar.exe``. Full guide in the README.")
+          $notes | Set-Content notes.md
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OrbitBar ${{ github.ref_name }}
+          body_path: notes.md
+          files: ${{ steps.zip.outputs.name }}
+
+      - name: Keep the build (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrbitBar-test-build
+          path: ${{ steps.zip.outputs.name }}

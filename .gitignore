@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.spec
+*.zip
+notes.md
+.vscode/
+.idea/
+version_info.txt
