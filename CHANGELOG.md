@@ -2,6 +2,14 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.5.2
+
+- **Updates install themselves.** When a new version is published, OrbitBar downloads it in the background, checks it against GitHub's own SHA-256 checksum, and installs it the next time it starts. Or click the notification to restart and update right away. Turn it off in ⚙ Settings → Alerts
+- Clicking an update notification now does something (before, it only closed it)
+- Scrolling down the Settings page no longer changes the dropdowns under the mouse (Bar widgets used to jump to Huge 150 % on the way to the Study section)
+
+From this version on, updating is automatic. Coming from 5.5.0 or 5.5.1? Download this one by hand once.
+
 ## 5.5.1
 
 - Jump around in a song: in the media card (hover the music on the bar), click or drag the progress bar, scroll over it for 5-second steps, or use −10 / +10

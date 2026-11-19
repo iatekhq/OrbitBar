@@ -14,7 +14,7 @@ A floating dock that replaces the Windows taskbar: apps, music, system stats, se
 
 **Getting your normal taskbar back:** right-click the bar → **Quit OrbitBar**. If OrbitBar ever crashes, a small watchdog brings the Windows taskbar back by itself within about 3 seconds.
 
-**Updating:** the bar tells you when a new version is out (right-click → *Get OrbitBar X.Y.Z*). Quit OrbitBar, unzip the new version over the old folder, start it again. Your settings are kept in `%APPDATA%\OrbitBar`.
+**Updating:** automatic. When a new version is out, OrbitBar downloads it in the background, checks it against the SHA-256 checksum GitHub publishes for the file, and installs it the next time it starts; click the notification (or right-click → *Update to OrbitBar X.Y.Z now*) to restart into it right away. Your settings in `%APPDATA%\OrbitBar` are kept. Prefer to do it by hand? Turn it off in ⚙ Settings → Alerts, then download the new zip and unzip it over the old folder.
 
 **Uninstalling:** right-click → turn off *Start with Windows* → *Quit OrbitBar*, then delete the folder (and `%APPDATA%\OrbitBar` if you want your settings gone too).
 

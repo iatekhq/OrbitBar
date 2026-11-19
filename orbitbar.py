@@ -126,7 +126,7 @@ APP_NAME = "OrbitBar"
 APP_PUBLISHER = "IATEK"
 # Where releases are published, e.g. "yourname/OrbitBar". Empty = the update check is off.
 GITHUB_REPO = "iatekhq/OrbitBar"
-APP_VERSION = "5.5.1"
+APP_VERSION = "5.5.2"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -157,7 +157,8 @@ DEFAULT_CONFIG = {
              "privacy": True, "media": True, "stats": True, "gpu": True, "network": True, "security": True,
              "battery": True, "volume": True, "clock": True, "tray": True, "study": True},
     "alerts": {"security": True, "privacy": True, "network": True},
-    "check_updates": True,         # look at GitHub Releases twice a day; never downloads anything by itself
+    "check_updates": True,         # look at GitHub Releases twice a day
+    "auto_update": True,           # downloaded build (.exe) only: fetch new versions, install at the next start
     "pinned": [
         r"C:\Windows\explorer.exe",
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -3799,9 +3800,15 @@ class ToastManager:
         self.live = []
         self.last_beep = 0.0
 
-    def notify(self, title, text, anchor=None):
+    def notify(self, title, text, anchor=None, on_click=None, linger=False):
+        """on_click: what clicking the notification does (it always closes it). linger: stays 30 s, not 8."""
         t = Toast(self.bar, self)
+        t.on_click = on_click
         t.set(title, text)
+        if linger:
+            t.timer.start(30_000)
+        if on_click:
+            t.setCursor(Qt.PointingHandCursor)
         self.live.append(t)
         while len(self.live) > self.MAX:
             self.live[0].dismiss()
@@ -3861,6 +3868,7 @@ class Toast(QWidget):
         bar.restyle(self)
         self.manager = manager
         self.gone = False
+        self.on_click = None
         self.timer = QTimer(self, singleShot=True, interval=8000, timeout=self.dismiss)
 
     def set(self, title, text):
@@ -3882,7 +3890,10 @@ class Toast(QWidget):
         animate_out(self, done)
 
     def mouseReleaseEvent(self, e):
+        action = self.on_click if e.button() == Qt.LeftButton else None
         self.dismiss()
+        if action:
+            QTimer.singleShot(0, action)
 
 
 # ---- Timer / Pomodoro ------------------------------------------------------------------
@@ -5848,6 +5859,33 @@ class WindowEvents:
 
 
 # ---- Settings window -----------------------------------------------------------------
+class NoWheelCombo(QComboBox):
+    """A dropdown that ignores the mouse wheel unless you clicked it first. Scrolling down the Settings page
+    used to change whatever dropdown passed under the mouse (e.g. Bar widgets jumping to Huge 150 %)."""
+
+    def __init__(self):
+        super().__init__()
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, e):
+        if self.hasFocus():
+            super().wheelEvent(e)
+        else:
+            e.ignore()                   # let the page scroll instead
+
+
+class NoWheelSpin(QSpinBox):
+    def __init__(self):
+        super().__init__()
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def wheelEvent(self, e):
+        if self.hasFocus():
+            super().wheelEvent(e)
+        else:
+            e.ignore()
+
+
 ACCENTS = ["#7c9cff", "#a78bfa", "#f472b6", "#fb7185", "#f59e0b", "#34d399", "#22d3ee", "#e5e7eb"]
 
 
@@ -5922,7 +5960,7 @@ class SettingsWindow(QWidget):
         return widget
 
     def combo(self, label, options, current):
-        c = QComboBox()
+        c = NoWheelCombo()
         for text, value in options:
             c.addItem(text, value)
         idx = [v for _, v in options].index(current) if current in [v for _, v in options] else 0
@@ -5936,7 +5974,7 @@ class SettingsWindow(QWidget):
         return c
 
     def spin(self, label, value, lo, hi, suffix=""):
-        s = QSpinBox()
+        s = NoWheelSpin()
         s.setRange(lo, hi)
         s.setValue(int(value))
         s.setSuffix(suffix)
@@ -6008,6 +6046,11 @@ class SettingsWindow(QWidget):
         self.alert_net = self.check("Pop up on open Wi-Fi or when your VPN disconnects", al.get("network", True))
         self.updates = self.check("Tell me when a new version is on GitHub (checks twice a day)",
                                   c.get("check_updates", True))
+        self.auto_update = self.check("Download new versions by themselves and install them the next time "
+                                      "OrbitBar starts", c.get("auto_update", True))
+        if not getattr(sys, "frozen", False):
+            self.auto_update.setEnabled(False)
+            self.auto_update.setToolTip("Only for the downloaded OrbitBar.exe. Running from source: use git pull.")
 
         self.head("Clock & calendar")
         self.h24 = self.check("24-hour clock", c.get("clock_24h", True))
@@ -6115,7 +6158,7 @@ class SettingsWindow(QWidget):
             widget_size=self.widget_size.currentData(), card_size=self.card_size.currentData(),
             autohide=self.autohide.isChecked(), previews=self.previews.isChecked(),
             hide_on_fullscreen=self.fullscreen.isChecked(), hide_windows_taskbar=self.hide_tb.isChecked(),
-            check_updates=self.updates.isChecked(),
+            check_updates=self.updates.isChecked(), auto_update=self.auto_update.isChecked(),
             alerts={"security": self.alert_sec.isChecked(), "privacy": self.alert_priv.isChecked(),
                     "network": self.alert_net.isChecked()},
             clock_24h=self.h24.isChecked(), week_starts_sunday=self.sunday.isChecked(),
@@ -7483,7 +7526,164 @@ def fetch_latest_release():
         return None
     d = http_json(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest")
     tag = d.get("tag_name") or ""
-    return {"version": tag.lstrip("vV"), "url": d.get("html_url") or f"https://github.com/{GITHUB_REPO}/releases"}
+    info = {"version": tag.lstrip("vV"), "url": d.get("html_url") or f"https://github.com/{GITHUB_REPO}/releases"}
+    for a in d.get("assets") or []:                  # the zip GitHub Actions built (see release.yml)
+        if str(a.get("name", "")).lower().endswith("-windows.zip"):
+            info["zip"] = a.get("browser_download_url") or ""
+            info["size"] = int(a.get("size") or 0)
+            info["digest"] = a.get("digest") or ""   # "sha256:<hex>", worked out by GitHub when it stored the file
+            break
+    return info
+
+
+# ---- Self-update (downloaded build only) -------------------------------------------------
+# Running from source? `git pull` is the update. For OrbitBar.exe: download the release zip from GitHub,
+# check it (right repo, right size, GitHub's own SHA-256 of the file, an OrbitBar.exe inside), unpack it next
+# to the settings, and let a tiny PowerShell helper copy it over the program folder once OrbitBar has quit.
+UPDATE_DIR = os.path.join(os.environ.get("LOCALAPPDATA", CONFIG_DIR), APP_NAME, "update")
+PENDING_PATH = os.path.join(UPDATE_DIR, "pending.json")
+
+
+def can_self_update():
+    if not getattr(sys, "frozen", False):
+        return False
+    app_dir = os.path.dirname(sys.executable)
+    probe = os.path.join(app_dir, ".orbitbar-write-test")
+    try:                                              # e.g. not in Program Files without admin rights
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def download_update(info):
+    """Runs in the background. Returns {"version", "src"} of the unpacked new OrbitBar folder, or {"error": why}."""
+    import hashlib
+    import shutil
+    import ssl
+    import zipfile
+    ver, url = info.get("version", ""), info.get("zip") or ""
+    if not url.startswith(f"https://github.com/{GITHUB_REPO}/releases/download/"):
+        return {"error": "the release has no Windows zip from this project"}
+    want = (info.get("digest") or "").lower()
+    if not want.startswith("sha256:"):
+        return {"error": "GitHub didn't give a checksum for the download"}
+    os.makedirs(UPDATE_DIR, exist_ok=True)
+    zpath = os.path.join(UPDATE_DIR, f"OrbitBar-v{ver}.zip")
+    req = urllib.request.Request(url, headers={"User-Agent": f"OrbitBar/{APP_VERSION} ({APP_PUBLISHER})"})
+
+    def fetch(ctx=None):
+        h, total = hashlib.sha256(), 0
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as r, open(zpath, "wb") as f:
+            while True:
+                chunk = r.read(1 << 16)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > 400 * 1024 * 1024:
+                    raise ValueError("download is far too big")
+                h.update(chunk)
+                f.write(chunk)
+        return h.hexdigest(), total
+    try:
+        try:
+            got, total = fetch()
+        except urllib.error.URLError as ex:
+            if not isinstance(getattr(ex, "reason", None), ssl.SSLError):
+                raise
+            import certifi
+            got, total = fetch(ssl.create_default_context(cafile=certifi.where()))
+    except Exception as ex:
+        return {"error": f"download failed ({ex})"}
+    if info.get("size") and total != info["size"]:
+        os.remove(zpath)
+        return {"error": "the download was incomplete"}
+    if got != want.split(":", 1)[1]:
+        os.remove(zpath)
+        return {"error": "the download didn't match GitHub's checksum - not installed"}
+    dest = os.path.join(UPDATE_DIR, ver)
+    shutil.rmtree(dest, ignore_errors=True)
+    try:
+        with zipfile.ZipFile(zpath) as z:
+            root = os.path.realpath(dest)
+            for name in z.namelist():                 # never write outside the update folder
+                if not os.path.realpath(os.path.join(root, name)).startswith(root + os.sep):
+                    return {"error": "the zip has an unsafe file path - not installed"}
+            z.extractall(dest)
+    except Exception as ex:
+        return {"error": f"couldn't unpack the update ({ex})"}
+    finally:
+        try:
+            os.remove(zpath)
+        except OSError:
+            pass
+    src = os.path.join(dest, "OrbitBar")
+    if not os.path.isfile(os.path.join(src, "OrbitBar.exe")):
+        return {"error": "the zip doesn't contain OrbitBar.exe"}
+    with open(PENDING_PATH, "w", encoding="utf-8") as f:
+        json.dump({"version": ver, "src": src}, f)
+    return {"version": ver, "src": src}
+
+
+def pending_update():
+    """A downloaded update newer than this copy, ready to install - or None (and stale leftovers cleaned up)."""
+    try:
+        with open(PENDING_PATH, encoding="utf-8") as f:
+            p = json.load(f)
+        if (version_tuple(p["version"]) > version_tuple(APP_VERSION)
+                and os.path.isfile(os.path.join(p["src"], "OrbitBar.exe"))):
+            return p
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    if os.path.isdir(UPDATE_DIR):
+        import shutil
+        shutil.rmtree(UPDATE_DIR, ignore_errors=True)
+    return None
+
+
+UPDATER_PS = r"""
+param([int]$WaitPid, [string]$Src, [string]$Dst, [string]$Log, [string]$Ver)
+function Note($m) { Add-Content -LiteralPath $Log -Value ("{0} updater: {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) }
+try { Wait-Process -Id $WaitPid -Timeout 30 -ErrorAction SilentlyContinue } catch {}
+# the crash watchdog is a second OrbitBar.exe from the same folder: wait for every copy to close
+for ($i = 0; $i -lt 60; $i++) {
+  $busy = Get-Process OrbitBar -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($Dst, 'OrdinalIgnoreCase') }
+  if (-not $busy) { break }
+  Start-Sleep -Milliseconds 500
+}
+# the program's own library folder is mirrored (old versions' files removed); top-level files are just replaced,
+# so nothing else that happens to be in the folder is ever deleted
+robocopy (Join-Path $Src '_internal') (Join-Path $Dst '_internal') /MIR /R:5 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+$a = $LASTEXITCODE
+robocopy $Src $Dst /R:5 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+$b = $LASTEXITCODE
+if ($a -lt 8 -and $b -lt 8) {
+  Note "installed OrbitBar $Ver"
+  Remove-Item -LiteralPath (Split-Path $Src) -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath (Join-Path (Split-Path (Split-Path $Src)) 'pending.json') -Force -ErrorAction SilentlyContinue
+} else {
+  Note "couldn't copy OrbitBar $Ver into $Dst (robocopy $a/$b) - starting the old version"
+  # forget it, so the old version doesn't try again at every start; the next update check offers it again
+  Remove-Item -LiteralPath (Join-Path (Split-Path (Split-Path $Src)) 'pending.json') -Force -ErrorAction SilentlyContinue
+}
+Start-Process -FilePath (Join-Path $Dst 'OrbitBar.exe') -WorkingDirectory $Dst
+"""
+
+
+def run_updater(p):
+    """Start the helper that installs update `p` as soon as this process (and its watchdog) has exited."""
+    import subprocess
+    os.makedirs(UPDATE_DIR, exist_ok=True)
+    script = os.path.join(UPDATE_DIR, "install-update.ps1")
+    with open(script, "w", encoding="utf-8-sig") as f:
+        f.write(UPDATER_PS)
+    app_dir = os.path.dirname(sys.executable)
+    subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                      "-File", script, "-WaitPid", str(os.getpid()), "-Src", p["src"], "-Dst", app_dir,
+                      "-Log", LOG_PATH, "-Ver", p["version"]],
+                     creationflags=0x00000008 | 0x00000200 | 0x08000000, close_fds=True, cwd=UPDATE_DIR)
 
 
 def fetch_public_ip():
@@ -8314,6 +8514,7 @@ class Bar(QWidget):
         self._search_card = None                  # built on first use
         QTimer.singleShot(5000, lambda: self.search_card)    # quietly, once the bar is up
         self.update_info, self._update_told = None, None
+        self.update_ready, self._updating = None, False      # a downloaded, checked update waiting to install
         self.update_timer = QTimer(self, interval=12 * 3600 * 1000, timeout=self.check_updates)
         if GITHUB_REPO:
             self.update_timer.start()
@@ -8677,14 +8878,81 @@ class Bar(QWidget):
             return
         if version_tuple(info["version"]) > version_tuple(APP_VERSION):
             self.update_info = info
-            if manual or self._update_told != info["version"]:
+            ready = self.update_ready and self.update_ready["version"] == info["version"]
+            if ready:
+                if manual:
+                    self.tell_update_ready()
+            elif self.cfg.get("auto_update", True) and can_self_update():
+                self.fetch_update(info, install_after=False, quiet=not manual)   # tells you once it's ready
+            elif manual or self._update_told != info["version"]:
                 self._update_told = info["version"]
+                one_click = can_self_update()
                 self.toast.notify(f"⬆ OrbitBar {info['version']} is available",
-                                  f"You have {APP_VERSION}. Right-click the bar → Get OrbitBar {info['version']}.")
+                                  f"You have {APP_VERSION}. Click here to "
+                                  + ("update now (OrbitBar restarts by itself)." if one_click
+                                     else "open the download page."),
+                                  on_click=self.update_now, linger=True)
         else:
             self.update_info = None
             if manual:
                 self.toast.notify("OrbitBar is up to date", f"You have the latest version ({APP_VERSION}).")
+
+    def update_now(self):
+        """Clicked "update": install it if it's already downloaded, else download, check and install it.
+        Running from source (or a folder we can't write to): open the release page instead."""
+        info = self.update_info
+        if not info:
+            return
+        if not can_self_update():
+            os.startfile(info["url"])
+            return
+        if self.update_ready and self.update_ready["version"] == info["version"]:
+            self.install_update(self.update_ready)
+        else:
+            self.fetch_update(info, install_after=True)
+
+    def fetch_update(self, info, install_after, quiet=False):
+        if self._updating:
+            return
+        self._updating = True
+        if not quiet:
+            self.toast.notify(f"⬇ Downloading OrbitBar {info['version']}…", "The bar keeps working meanwhile.")
+
+        def done(res):
+            self._updating = False
+            if not res or res.get("error"):
+                why = (res or {}).get("error", "unknown error")
+                print(f"{datetime.now():%H:%M:%S} update {info['version']}: {why}")
+                if not quiet:
+                    self.toast.notify("Couldn't update OrbitBar", f"{why[:1].upper()}{why[1:]}. "
+                                      "Click to get it from the download page.",
+                                      on_click=lambda: os.startfile(info["url"]))
+                return
+            print(f"{datetime.now():%H:%M:%S} update {res['version']} downloaded and verified")
+            self.update_ready = res
+            if install_after:
+                self.install_update(res)
+            else:
+                self.tell_update_ready()
+        BgCall(lambda: download_update(info), done)
+
+    def tell_update_ready(self):
+        v = self.update_ready["version"]
+        self._update_told = v
+        self.toast.notify(f"⬆ OrbitBar {v} is ready", "Click to restart and update now, or it installs "
+                          "itself the next time OrbitBar starts.",
+                          on_click=lambda: self.install_update(self.update_ready), linger=True)
+
+    def install_update(self, p):
+        if not p:
+            return
+        try:
+            run_updater(p)
+        except Exception as ex:
+            self.toast.notify("Couldn't start the update", str(ex)[:120])
+            return
+        print(f"{datetime.now():%H:%M:%S} restarting to install OrbitBar {p['version']}")
+        QApplication.quit()                     # normal quit: the taskbar comes back for a second, then the new bar
 
     @property
     def search_card(self):
@@ -9376,7 +9644,10 @@ class Bar(QWidget):
         m = QMenu(self)
         if self.update_info:
             info = self.update_info
-            m.addAction(f"⬆  Get OrbitBar {info['version']}…").triggered.connect(lambda: os.startfile(info["url"]))
+            ready = self.update_ready and self.update_ready["version"] == info["version"]
+            m.addAction(f"⬆  Update to OrbitBar {info['version']} now" if can_self_update()
+                        else f"⬆  Get OrbitBar {info['version']}…").triggered.connect(
+                lambda: self.install_update(self.update_ready) if ready else self.update_now())
         m.addAction("⚙  Settings…").triggered.connect(self.open_settings)
         m.addSeparator()
         themes = m.addMenu("Style")
@@ -9735,6 +10006,13 @@ def main():
     if not take_instance_lock() and not takeover:
         print("OrbitBar is already running. Right-click the bar > Quit OrbitBar first, or use Reload.")
         return
+    if getattr(sys, "frozen", False) and not takeover:
+        p = pending_update()                  # downloaded last time: install it before the bar even appears
+        if p and load_config().get("auto_update", True) and can_self_update():
+            setup_logging()
+            print(f"--- installing OrbitBar {p['version']} (downloaded earlier) ---")
+            run_updater(p)
+            return
 
     cfg = load_config()
     scale = float(cfg.get("scale", 1.0) or 1.0)
