@@ -126,7 +126,7 @@ APP_NAME = "OrbitBar"
 APP_PUBLISHER = "IATEK"
 # Where releases are published, e.g. "yourname/OrbitBar". Empty = the update check is off.
 GITHUB_REPO = "iatekhq/OrbitBar"
-APP_VERSION = "5.5.6"
+APP_VERSION = "5.5.7"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -549,6 +549,19 @@ def foreground_looks_fullscreen():
     user32.GetWindowRect(h, ctypes.byref(r))
     prim = primary_monitor_rect()
     return (r.right - r.left) >= (prim.right - prim.left) and (r.bottom - r.top) >= (prim.bottom - prim.top) * 0.85
+
+
+def window_still_fullscreen(h):
+    """Is window `h` (the one the bar hid for) still a fullscreen video/game on the primary monitor?"""
+    if not h or not user32.IsWindow(h) or not user32.IsWindowVisible(h) or user32.IsIconic(h):
+        return False
+    style = user32.GetWindowLongW(h, -16) & 0xFFFFFFFF
+    if (style & 0x00C00000) == 0x00C00000 or style & 0x00040000:      # got its title bar / border back
+        return False
+    r = wt.RECT()
+    user32.GetWindowRect(h, ctypes.byref(r))
+    m = primary_monitor_rect()
+    return r.left <= m.left and r.top <= m.top and r.right >= m.right and r.bottom >= m.bottom
 
 
 def cursor_pos():
@@ -9307,15 +9320,23 @@ class Bar(QWidget):
     _fs_off_since = None
 
     def check_fullscreen(self):
-        """Hide for fullscreen video/games, come back the instant they end. Cheap: two Win32 calls."""
+        """Hide for fullscreen video/games, come back the instant they end. Cheap: a few Win32 calls."""
         if not self.cfg.get("hide_on_fullscreen", True):
             return
         fs = foreground_is_fullscreen()
+        fg = user32.GetForegroundWindow()
+        fs_win = getattr(self, "_fs_hwnd", None)
         if not fs and self.fs_hidden and foreground_looks_fullscreen():
             fs = True                         # still the same borderless video, just squeezed for a moment
+        if not fs and self.fs_hidden and fs_win and fg != fs_win and fg \
+                and window_pid(fg) == window_pid(fs_win) and window_still_fullscreen(fs_win):
+            # the player's own controls took focus (VLC's seek bar, a menu, a subtitle dialog): the video is
+            # still fullscreen behind them, so stay out of the way
+            fs = True
+        ended_by_video = (not fs and self.fs_hidden and fs_win and fg == fs_win)   # Esc / double-click
         if fs:
             self._fs_off_since = None
-        elif self.fs_hidden:
+        elif self.fs_hidden and not ended_by_video:
             # Come back only once fullscreen has really ended (2+ checks in a row, ~0.3 s). A single blip -
             # a pop-up, the foreground briefly being nobody - used to flip the bar above/below the video.
             now = time.monotonic()
@@ -9326,6 +9347,8 @@ class Bar(QWidget):
                 return
         if fs and not self.fs_hidden:
             self.fs_hidden = True
+            self._fs_hwnd = fg
+            self.fs_timer.setInterval(60)     # watch closely while hidden: back within a blink when it ends
             try:
                 h = user32.GetForegroundWindow()
                 key = (proc_name(window_pid(h)), class_name(h))
@@ -9342,6 +9365,9 @@ class Bar(QWidget):
             self.hide()
         elif not fs and self.fs_hidden:
             self.fs_hidden = False
+            self._fs_hwnd = None
+            self._fs_off_since = None
+            self.fs_timer.setInterval(250)
             if not self.ah_hidden:
                 self.reappear()
 

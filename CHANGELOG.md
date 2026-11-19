@@ -2,6 +2,11 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.5.7
+
+- Fullscreen VLC (and other players): grabbing the seek bar or opening a menu no longer brings the bar up over the video's controls
+- Leaving fullscreen (Esc or double-click): the bar is back almost instantly, instead of showing the wallpaper in its place for a moment
+
 ## 5.5.6
 
 - The Settings window opens wide enough for every row: with Large or bigger text sizes, the dropdowns and accent colours used to be cut off on the right
