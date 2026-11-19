@@ -2,6 +2,12 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+
+## 5.5.5
+
+
+- Testing automatic updates
+
 ## 5.5.4
 
 - Automatic updates are installed by the new OrbitBar.exe itself, no PowerShell script any more (in 5.5.2/5.5.3 the hidden script didn't run on some PCs, and the bar then didn't come back)
