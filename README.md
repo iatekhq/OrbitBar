@@ -153,9 +153,11 @@ Right-click the bar and turn on **Start with Windows**, or tick it in ⚙ Settin
 ## Build it yourself
 
 ```powershell
-py -m pip install -r requirements.txt pyinstaller
+py -m pip install --require-hashes --no-deps -r requirements-lock.txt   # the exact, hash-checked versions the release uses
 .\build.ps1             # -> dist\OrbitBar\OrbitBar.exe   (.\build.ps1 -Console shows errors in a console)
 ```
+
+**How releases are protected.** The release build installs only the exact package versions in `requirements-lock.txt`, each checked against its SHA-256, and every GitHub Action it uses is pinned to an exact commit, so a hijacked upstream release can't slip into OrbitBar.exe. Dependabot proposes updates to the pinned Actions; to update the Python packages, run the `uv pip compile` command at the top of `requirements-build.in`. The bar only installs updates whose SHA-256 matches the one GitHub published for this repo's release.
 
 It's a folder build, not a single .exe on purpose: a one-file .exe unpacks itself to a temp folder on every start (slower), and the crash watchdog would need the full unpack too.
 

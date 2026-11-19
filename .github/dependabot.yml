@@ -1,0 +1,9 @@
+# Weekly pull requests when a pinned GitHub Action has a new release (it keeps the commit pins and comments).
+# Python packages: Dependabot security alerts flag a bad version in requirements-lock.txt; regenerate it with
+# the command at the top of requirements-build.in.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
