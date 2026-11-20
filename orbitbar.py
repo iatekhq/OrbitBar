@@ -126,7 +126,7 @@ APP_NAME = "OrbitBar"
 APP_PUBLISHER = "IATEK"
 # Where releases are published, e.g. "yourname/OrbitBar". Empty = the update check is off.
 GITHUB_REPO = "iatekhq/OrbitBar"
-APP_VERSION = "5.5.8"
+APP_VERSION = "5.5.9"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -10035,6 +10035,26 @@ def starts_with_windows():
     return os.path.exists(STARTUP_LNK)
 
 
+def repair_startup_shortcut():
+    """"Start with Windows" is a shortcut in the Startup folder. If OrbitBar was moved, or you switched from
+    running the .py to the .exe (or the other way), it still points at the old place and nothing starts at
+    boot - while the menu says it's on. Runs in the background at every start: points it here if needed."""
+    if not starts_with_windows():
+        return None
+    target = background_python()
+    args = "" if getattr(sys, "frozen", False) else f'"{SCRIPT_PATH}"'
+    ps = (f"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{STARTUP_LNK}');"
+          f"if ($s.TargetPath -ne '{target}' -or $s.Arguments -ne '{args}') {{"
+          f"  $old = \"$($s.TargetPath) $($s.Arguments)\";"
+          f"  $s.TargetPath='{target}';$s.Arguments='{args}';"
+          f"  $s.WorkingDirectory='{os.path.dirname(SCRIPT_PATH)}';$s.Save(); \"fixed: $old\" }} else {{ 'ok' }}")
+    out = run_powershell(ps, timeout=20)
+    if out.startswith("fixed"):
+        print(f"{datetime.now():%H:%M:%S} Start with Windows pointed at an old copy ({out[7:].strip()}) "
+              f"- now starts {target} {args}".rstrip())
+    return out
+
+
 def set_start_with_windows(on):
     if not on:
         try:
@@ -10209,6 +10229,7 @@ def main():
                 print("watchdog unavailable:", ex)
         _bar.show()
         _bar.place()
+        BgCall(repair_startup_shortcut, lambda r: None)    # keep "Start with Windows" pointing at this copy
         _bar.start_window_events()
         _bar.tick_fast()
         _bar.tick_slow()

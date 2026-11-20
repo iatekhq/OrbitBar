@@ -2,6 +2,10 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.5.9
+
+- "Start with Windows" works again after you move OrbitBar or switch between the .py and the .exe: the startup shortcut kept pointing at the old copy, so nothing started at boot while the menu said it was on. OrbitBar now checks the shortcut every time it starts and points it at itself
+
 ## 5.5.8
 
 - The Windows taskbar no longer flashes for a moment when the mouse reaches the bottom of the screen (noticeable with Task Manager open): OrbitBar now hides it again the instant Windows shows it
