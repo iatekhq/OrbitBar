@@ -1,5 +1,5 @@
 """
-OrbitBar - a Lumabar-style taskbar replacement for Windows 10/11.
+OrbitBar - a modern taskbar replacement for Windows 10/11, by IATEK.
 
 Features
   * Pinned apps + open windows (grouped per app, click to focus/minimize/cycle)
@@ -126,7 +126,10 @@ APP_NAME = "OrbitBar"
 APP_PUBLISHER = "IATEK"
 # Where releases are published, e.g. "yourname/OrbitBar". Empty = the update check is off.
 GITHUB_REPO = "iatekhq/OrbitBar"
-APP_VERSION = "5.5.9"
+# "Like it? Buy me a coffee" in About OrbitBar (Buy Me a Coffee, Ko-fi, GitHub Sponsors, PayPal...).
+# Empty = the button isn't shown.
+SUPPORT_URL = "https://buymeacoffee.com/iatek"
+APP_VERSION = "5.6.0"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -3101,7 +3104,7 @@ def animate_out(win, done, ms=140):
 
 
 class Card(QFrame):
-    """Popup panel that opens out of the bar, like Lumabar's widget cards."""
+    """Popup panel that opens out of the bar (calendar, weather, stats, media...)."""
 
     def __init__(self, bar, width=300):
         super().__init__(None, Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
@@ -5869,6 +5872,84 @@ class WindowEvents:
         for h in self.hooks:
             user32.UnhookWinEvent(h)
         self.hooks = []
+
+
+# ---- About -----------------------------------------------------------------------------
+class AboutWindow(QWidget):
+    """Right-click > About OrbitBar: what it is, who made it, links, and a quiet coffee button.
+    Nothing here ever pops up by itself."""
+
+    def __init__(self, bar):
+        super().__init__(None, Qt.Window)
+        self.bar = bar
+        self.setWindowTitle("About OrbitBar")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        panel = QFrame()                                     # the card colour lives on this panel, like Settings
+        panel.setObjectName("aboutWin")
+        outer.addWidget(panel)
+        v = QVBoxLayout(panel)
+        v.setContentsMargins(26, 22, 26, 20)
+        v.setSpacing(6)
+        v.addWidget(lbl("OrbitBar", "h1"))
+        v.addWidget(lbl(f"Version {APP_VERSION} · a modern taskbar for Windows", "dim"))
+        v.addSpacing(10)
+        made = lbl(f"Made by <b>{APP_PUBLISHER}</b>, a cybersecurity bootcamp and consultancy. It started as a "
+                   "teaching project: the whole app is one readable Python file, so students can see how a "
+                   "real Windows program talks to the system.")
+        made.setWordWrap(True)
+        v.addWidget(made)
+        lic = lbl("Free and open source under the MIT license. No ads, no tracking, nothing locked.", "dim")
+        lic.setWordWrap(True)
+        v.addWidget(lic)
+        v.addSpacing(8)
+        links = QHBoxLayout()
+        links.setSpacing(6)
+        repo = f"https://github.com/{GITHUB_REPO}" if GITHUB_REPO else ""
+        for text, url in (("Source code", repo), ("What's new", f"{repo}/releases" if repo else ""),
+                          ("Report a problem", f"{repo}/issues" if repo else "")):
+            if url:
+                b = text_button(text, "chip")
+                b.clicked.connect(lambda _=False, u=url: os.startfile(u))
+                links.addWidget(b)
+        links.addStretch(1)
+        v.addLayout(links)
+        if SUPPORT_URL:
+            v.addSpacing(14)
+            row = QHBoxLayout()
+            like = lbl("Like OrbitBar?")
+            row.addWidget(like)
+            row.addStretch(1)
+            coffee = text_button("☕  Buy me a coffee", "primary", "Optional - OrbitBar stays free either way")
+            coffee.clicked.connect(lambda: os.startfile(SUPPORT_URL))
+            row.addWidget(coffee)
+            v.addLayout(row)
+        v.addStretch(1)
+        foot = QHBoxLayout()
+        foot.addStretch(1)
+        close = text_button("Close")
+        close.clicked.connect(self.close)
+        foot.addWidget(close)
+        v.addSpacing(10)
+        v.addLayout(foot)
+        bar.restyle(self)
+        a = bar.cfg["accent"]
+        self.setStyleSheet(self.styleSheet() + f"""
+            QFrame#aboutWin {{ background: {rgba(T['card'][:3] + (255,))}; }}
+            QLabel[class="h1"] {{ font-size: 22pt; font-weight: 600; }}
+            QPushButton[class="primary"] {{ background: {a}; color: #0d0d14; font-weight: 600; padding: 7px 14px; }}
+        """)
+        self.setMinimumWidth(460)
+
+    def open(self):
+        self.adjustSize()
+        scr = (self.screen() or QApplication.primaryScreen()).availableGeometry()
+        g = self.frameGeometry()
+        g.moveCenter(scr.center())
+        self.move(g.topLeft())
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
 
 # ---- Settings window -----------------------------------------------------------------
@@ -9643,6 +9724,12 @@ class Bar(QWidget):
             self.settings_win = SettingsWindow(self)
         self.settings_win.open()
 
+    def open_about(self):
+        w = getattr(self, "about_win", None)
+        if w is None or not w.isVisible():
+            self.about_win = AboutWindow(self)
+        self.about_win.open()
+
     def set_cfg(self, **changes):
         """Save settings and apply them in place - no restart, so music, timers, the tray and your open
         cards keep running. Only "Size of everything" restarts the bar (Qt fixes its scale at start-up)."""
@@ -9869,6 +9956,7 @@ class Bar(QWidget):
         if GITHUB_REPO:
             m.addAction(f"Check for updates (you have {APP_VERSION})").triggered.connect(
                 lambda: self.check_updates(manual=True))
+        m.addAction("About OrbitBar…").triggered.connect(self.open_about)
         m.addSeparator()
         m.addAction("Quit OrbitBar").triggered.connect(QApplication.quit)
         m.exec(self.popup_pos(m.sizeHint(), e.globalPos()))

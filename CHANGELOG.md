@@ -2,6 +2,10 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.6.0
+
+- New **About OrbitBar** window (right-click the bar): version, who makes it, links to the source code, what's new and bug reports, and an optional "Buy me a coffee" button. Nothing ever pops up by itself; OrbitBar stays free with nothing locked
+
 ## 5.5.9
 
 - "Start with Windows" works again after you move OrbitBar or switch between the .py and the .exe: the startup shortcut kept pointing at the old copy, so nothing started at boot while the menu said it was on. OrbitBar now checks the shortcut every time it starts and points it at itself
