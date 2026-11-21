@@ -14,6 +14,7 @@ comtypes==1.5.0 \
     # via
     #   -r requirements.txt
     #   pycaw
+    #   pyvda
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
@@ -111,6 +112,10 @@ pyside6-webengine==6.12.0.140 \
     --hash=sha256:c041c9921d7c91c9e51a2c027f434d05c3c59baa2c8f17b71dc8194e77791f06 \
     --hash=sha256:f9b61b1d457a591ee590a6b80515f25a3e61e2576a2a0a70566380f9d9de4ab0
     # via pyside6
+pyvda==0.6.0 \
+    --hash=sha256:0e840a84458a946812803c7353e161fafeae9776b76c4e2d358af5dc24df9229 \
+    --hash=sha256:c62e702044f8f8cbc0cdcaaedf5e0fc5c7b908d94153b681c9ed62634cc5031a
+    # via -r requirements.txt
 pywin32-ctypes==0.2.3 \
     --hash=sha256:8a1513379d709975552d202d942d9837758905c8d01eb82b8bcc30918929e7b8 \
     --hash=sha256:d162dc04946d704503b2edc4d55f3dba5c1d539ead017afa00142c38b9885755

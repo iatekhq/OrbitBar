@@ -4,6 +4,8 @@
 
 A floating dock that replaces the Windows taskbar: apps, music, system stats, security status, a study planner and more, all live and all customizable with a right-click. Free and open source, made by [IATEK](#about).
 
+Like OrbitBar? [☕ Buy me a coffee](https://buymeacoffee.com/iatek). Totally optional: OrbitBar stays free, with nothing locked.
+
 ## 📥 Install (2 minutes, no Python needed)
 
 1. Go to the **[Releases page](../../releases/latest)** and download `OrbitBar-vX.Y.Z-windows.zip`.

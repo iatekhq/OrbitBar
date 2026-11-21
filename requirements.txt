@@ -8,3 +8,4 @@ winrt-Windows.Media.Control>=2.0
 tzdata>=2024.1
 certifi>=2024.2
 winrt-Windows.Storage.Streams>=2.0
+pyvda>=0.6

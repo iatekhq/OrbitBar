@@ -129,7 +129,7 @@ GITHUB_REPO = "iatekhq/OrbitBar"
 # "Like it? Buy me a coffee" in About OrbitBar (Buy Me a Coffee, Ko-fi, GitHub Sponsors, PayPal...).
 # Empty = the button isn't shown.
 SUPPORT_URL = "https://buymeacoffee.com/iatek"
-APP_VERSION = "5.6.0"
+APP_VERSION = "5.6.1"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -1852,11 +1852,17 @@ class Workspaces(Pill):
             QTimer.singleShot(steps * 70 + 700, self.refresh)    # Windows can be slow to record the switch
 
     def close_desktop(self, i):
-        """Windows can only close the *current* desktop (Ctrl+Win+F4), so switch to it first.
-        Its windows move to the neighbouring desktop - nothing gets closed."""
+        """Close desktop i; its windows move to the neighbouring desktop - nothing gets closed.
+        First choice: remove it directly, without leaving the desktop you're on (the same Windows component
+        Task View uses, via pyvda). If that isn't available on this Windows build, fall back to the keyboard:
+        Windows only closes the *current* desktop (Ctrl+Win+F4), so that way has to switch to it first."""
         if not self.state or len(self.state[0]) <= 1:
             return
         cur = self.state[1]
+        if remove_desktop_directly(i, cur):
+            QTimer.singleShot(150, self.refresh)
+            QTimer.singleShot(600, self.refresh)
+            return
         steps = switch_desktop(i, cur) if i != cur else 0
         QTimer.singleShot(steps * 70 + 150, lambda: send_keys("ctrl", "win", "f4"))
         QTimer.singleShot(steps * 70 + 550, self.refresh)
@@ -1877,6 +1883,28 @@ class Workspaces(Pill):
     def wheelEvent(self, e):
         send_keys("ctrl", "win", "left" if e.angleDelta().y() > 0 else "right")
         QTimer.singleShot(250, self.refresh)
+
+
+_direct_desktops = True
+
+
+def remove_desktop_directly(i, cur):
+    """Remove desktop i (0-based) without switching to it. False if this Windows build doesn't allow it."""
+    global _direct_desktops
+    if not _direct_desktops:
+        return False
+    try:
+        from pyvda import VirtualDesktop
+        if i == cur:                          # closing the one you're on: land on its left neighbour
+            fallback = VirtualDesktop(i if i > 0 else 2)
+        else:
+            fallback = VirtualDesktop(cur + 1)
+        VirtualDesktop(i + 1).remove(fallback=fallback)
+        return True
+    except Exception as ex:                   # unknown Windows build, pyvda missing...: keyboard way from now on
+        _direct_desktops = False
+        print("closing desktops directly isn't available here, switching to them instead:", ex)
+        return False
 
 
 class Sparkline(QWidget):
@@ -10290,8 +10318,9 @@ def main():
 
     cfg = load_config()
     scale = float(cfg.get("scale", 1.0) or 1.0)
-    if abs(scale - 1.0) > 0.01:                       # Qt scales every widget, font and card evenly
-        os.environ["QT_SCALE_FACTOR"] = f"{max(0.75, min(scale, 2.0)):.2f}"
+    # Qt scales every widget, font and card evenly. Always set it - Normal too: after "Size of everything"
+    # the restarted copy inherits this setting from the old one, so skipping it at 1.0 kept the old size.
+    os.environ["QT_SCALE_FACTOR"] = f"{max(0.75, min(scale, 2.0)):.2f}"
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     apply_theme(cfg)
@@ -10302,7 +10331,8 @@ def main():
     atexit.register(cleanup)
     app.aboutToQuit.connect(cleanup)
     signal.signal(signal.SIGINT, lambda *a: app.quit())
-    QTimer(app, interval=300, timeout=lambda: None).start()   # let Python handle Ctrl+C
+    if sys.stdout is not None and not getattr(sys, "frozen", False) and "--detached" not in sys.argv:
+        QTimer(app, interval=300, timeout=lambda: None).start()   # let Python handle Ctrl+C (console runs only)
 
     _bar = Bar(cfg, _taskbar)
 

@@ -2,6 +2,12 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.6.1
+
+- Size of everything: going back to **Normal** after Large or Extra large works again (the bar used to stay large)
+- Closing a desktop no longer slides you through it: OrbitBar removes it directly and you stay where you are (falls back to the old way on Windows builds that don't allow it). Close 4, 3 and 2 from desktop 1 and you never leave desktop 1
+- A little less background work when running as OrbitBar.exe
+
 ## 5.6.0
 
 - New **About OrbitBar** window (right-click the bar): version, who makes it, links to the source code, what's new and bug reports, and an optional "Buy me a coffee" button. Nothing ever pops up by itself; OrbitBar stays free with nothing locked
