@@ -2,6 +2,11 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.6.2
+
+- Clicking a desktop far away (e.g. 1 → 4) jumps straight there in one transition, instead of sliding through 2 and 3 (falls back to the old way on Windows builds that don't allow it)
+- New desktops show up on the bar right away, whichever desktop you're on: the bar now reads the live list Task View uses, instead of a copy Windows only saves now and then (that copy is still the fallback)
+
 ## 5.6.1
 
 - Size of everything: going back to **Normal** after Large or Extra large works again (the bar used to stay large)

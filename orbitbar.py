@@ -129,7 +129,7 @@ GITHUB_REPO = "iatekhq/OrbitBar"
 # "Like it? Buy me a coffee" in About OrbitBar (Buy Me a Coffee, Ko-fi, GitHub Sponsors, PayPal...).
 # Empty = the button isn't shown.
 SUPPORT_URL = "https://buymeacoffee.com/iatek"
-APP_VERSION = "5.6.1"
+APP_VERSION = "5.6.2"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -772,8 +772,33 @@ class AppBar:
 VD_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\VirtualDesktops"
 
 
+_live_desktop_list = True
+
+
 def virtual_desktops():
-    """Returns (names, current_index)."""
+    """Returns (names, current_index). First choice: the live list, from the same Windows component Task View
+    uses (pyvda) - new desktops show up at once. The registry copy below is only written by Windows now and
+    then (sometimes not until you switch desktops), so it's the fallback for Windows builds pyvda can't read."""
+    global _live_desktop_list
+    if _live_desktop_list:
+        try:
+            from pyvda import VirtualDesktop, get_virtual_desktops
+            desks = get_virtual_desktops()
+            if desks:
+                cur_id = VirtualDesktop.current().id
+                names, idx = [], 0
+                for i, d in enumerate(desks):
+                    try:
+                        name = d.name
+                    except Exception:
+                        name = ""
+                    names.append(name or str(i + 1))
+                    if d.id == cur_id:
+                        idx = i
+                return names, idx
+        except Exception as ex:
+            _live_desktop_list = False
+            print("live desktop list isn't available here, reading it from the registry instead:", ex)
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, VD_KEY) as k:
             ids, _ = winreg.QueryValueEx(k, "VirtualDesktopIDs")
@@ -812,8 +837,22 @@ def virtual_desktops():
     return names, idx
 
 
+_direct_desktops = True        # jump/close desktops directly (pyvda); False once this Windows build refuses
+
+
 def switch_desktop(target, current):
-    """Ctrl+Win+Arrow once per step, spaced out by timers: the bar never sleeps while switching."""
+    """Go to desktop `target` (0-based). First choice: jump straight there, one transition, the way Task View
+    does (pyvda). Fallback: Ctrl+Win+Arrow once per step, which slides through every desktop in between.
+    Returns how many keyboard steps were sent (0 for a direct jump), so callers know when to look again."""
+    global _direct_desktops
+    if _direct_desktops and target != current:
+        try:
+            from pyvda import VirtualDesktop
+            VirtualDesktop(target + 1).go()
+            return 0
+        except Exception as ex:               # unknown Windows build: keyboard from now on
+            _direct_desktops = False
+            print("switching desktops directly isn't available here, using Ctrl+Win+Arrow instead:", ex)
     delta = target - current
     key = "right" if delta > 0 else "left"
     for n in range(abs(delta)):
@@ -1883,9 +1922,6 @@ class Workspaces(Pill):
     def wheelEvent(self, e):
         send_keys("ctrl", "win", "left" if e.angleDelta().y() > 0 else "right")
         QTimer.singleShot(250, self.refresh)
-
-
-_direct_desktops = True
 
 
 def remove_desktop_directly(i, cur):
@@ -9722,6 +9758,8 @@ class Bar(QWidget):
             self.clock.refresh()
         if self.volume_btn:
             self.volume_btn.refresh()
+        if self.workspaces:
+            self.workspaces.refresh()     # desktops made from Task View or the keyboard show up within a second
         if self.recycle and self.slow_ticks % 5 == 0:
             self.recycle.refresh()
         if self.study and self.slow_ticks % 30 == 0:
