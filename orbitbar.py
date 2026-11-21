@@ -109,7 +109,7 @@ import urllib.parse
 import urllib.request
 import winreg
 from collections import OrderedDict, deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import psutil
 from PySide6.QtCore import (QEvent, QFileInfo, QMimeData, QObject, QPoint, QPropertyAnimation, QRectF, QSize, Qt,
@@ -129,7 +129,7 @@ GITHUB_REPO = "iatekhq/OrbitBar"
 # "Like it? Buy me a coffee" in About OrbitBar (Buy Me a Coffee, Ko-fi, GitHub Sponsors, PayPal...).
 # Empty = the button isn't shown.
 SUPPORT_URL = "https://buymeacoffee.com/iatek"
-APP_VERSION = "5.6.2"
+APP_VERSION = "5.7.0"
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 STATE_PATH = os.path.join(CONFIG_DIR, "taskbar_state.json")
@@ -5263,6 +5263,18 @@ class SecurityCard(Card):
             b.clicked.connect(lambda _=False, f=fn: f())
             btns.addWidget(b)
         self.body.addLayout(btns)
+        perms = text_button("App permissions: camera, mic, location…")
+        perms.clicked.connect(self.open_permissions)
+        self.body.addWidget(perms)
+
+    def open_permissions(self):
+        """The privacy card, opened from the shield (the camera/mic/location badge only shows while in use)."""
+        pw = getattr(self.bar, "privacy", None)
+        self.hide()
+        if pw is not None:
+            pw.card.open_from(self.w)
+        else:
+            os.startfile("ms-settings:privacy")
 
     def refresh(self):
         s = self.w.status
@@ -5450,6 +5462,86 @@ def apps_using(capability):
     return sorted(users, key=str.lower)
 
 
+PRIVACY_CAPS = (("webcam", "Camera"), ("microphone", "Microphone"), ("location", "Location"))
+
+
+def consent_permissions(capability):
+    """Per app: what Windows has on record for this permission, from Settings > Privacy & security.
+    {app: {"value": "Allow"/"Deny"/"Prompt"/None, "last": datetime or None, "desktop": bool}}.
+    Store apps get their own Allow/Deny switch; desktop programs share one switch ("Let desktop apps access...")
+    and only their last use is recorded."""
+    apps = {}
+
+    def scan(root, path, nonpackaged):
+        try:
+            k = winreg.OpenKey(root, path)
+        except OSError:
+            return
+        with k:
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(k, i)
+                except OSError:
+                    break
+                i += 1
+                if sub == "NonPackaged":
+                    scan(root, path + "\\" + sub, True)
+                    continue
+                try:
+                    with winreg.OpenKey(k, sub) as sk:
+                        def val(name):
+                            try:
+                                return winreg.QueryValueEx(sk, name)[0]
+                            except OSError:
+                                return None
+                        value, start = val("Value"), val("LastUsedTimeStart")
+                except OSError:
+                    continue
+                last = None
+                if start:
+                    try:
+                        last = datetime(1601, 1, 1) + timedelta(microseconds=int(start) // 10)   # UTC
+                    except (OverflowError, ValueError):
+                        last = None
+                name = pretty_app(sub, nonpackaged)
+                cur = apps.setdefault(name, {"value": None, "last": None, "desktop": nonpackaged})
+                if value and not cur["value"]:
+                    cur["value"] = str(value)
+                if last and (cur["last"] is None or last > cur["last"]):
+                    cur["last"] = last
+
+    scan(winreg.HKEY_CURRENT_USER, CONSENT_KEY + "\\" + capability, False)
+    return apps
+
+
+def desktop_apps_switch(capability):
+    """The shared "Let desktop apps access your ..." switch: "Allow", "Deny" or None (not set = allowed)."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CONSENT_KEY + "\\" + capability + "\\NonPackaged") as k:
+            return str(winreg.QueryValueEx(k, "Value")[0])
+    except OSError:
+        return None
+
+
+def utc_now():
+    """Current UTC time without a timezone attached, to compare with Windows' FILETIME records."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def time_ago(when_utc):
+    if not when_utc:
+        return ""
+    mins = int((utc_now() - when_utc).total_seconds() // 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins} min ago"
+    if mins < 48 * 60:
+        return f"{mins // 60} h ago"
+    return f"{mins // 1440} days ago"
+
+
 def calendar_report():
     """python orbitbar.py --check-calendar : what OrbitBar understood from your links and entries."""
     cfg = load_config()
@@ -5541,13 +5633,19 @@ def privacy_report():
         print("  unavailable:", getattr(mic_apps_live, "error", "pycaw/comtypes missing"))
     else:
         print("  recording now:", ", ".join(mics) or "nothing")
-    print("\n== Registry history (older Windows builds) ==")
-    for cap in ("webcam", "microphone"):
+    print("\n== Registry history (older Windows builds; location always comes from here) ==")
+    for cap in ("webcam", "microphone", "location"):
         rows = consent_entries(cap)
         print(f"\n== {cap}: {len(rows)} recorded apps ==")
         for app, start, stop, hive in sorted(rows, key=lambda r: -(r[1] or 0))[:15]:
             live = "IN USE" if start and (not stop or stop < start) else "      "
             print(f"  {live}  {app:28} {hive}  start {_filetime_str(start)}  stop {_filetime_str(stop)}")
+    print("\n== App permissions (what the privacy card shows) ==")
+    for cap, title in PRIVACY_CAPS:
+        apps = consent_permissions(cap)
+        print(f"\n  {title}: desktop programs {desktop_apps_switch(cap) or 'Allow (not set)'}")
+        for a, d in sorted(apps.items(), key=lambda kv: kv[0].lower()):
+            print(f"    {a:28} {d['value'] or '-':6} {'desktop' if d['desktop'] else 'store  '}  last used {time_ago(d['last']) or '-'}")
     print("\nIN USE = what OrbitBar shows. Turn your camera on (e.g. Zoom video preview) and run this again.")
 
 
@@ -5756,7 +5854,7 @@ class CameraMonitor:
 
 
 class PrivacyWorker(QThread):
-    changed = Signal(list, list)       # camera apps, microphone apps
+    changed = Signal(list, list, list)       # camera apps, microphone apps, location apps
 
     def run(self):
         try:
@@ -5767,7 +5865,7 @@ class PrivacyWorker(QThread):
         self.cam = CameraMonitor()
         last = None
         n = 0
-        reg_cam, reg_mic = set(), set()
+        reg_cam, reg_mic, reg_loc = set(), set(), set()
         while not self.isInterruptionRequested():
             try:
                 live_cam, live_mic = self.cam.apps(), mic_apps_live()
@@ -5777,12 +5875,14 @@ class PrivacyWorker(QThread):
                     reg_cam = set(apps_using("webcam"))
                 if n % 4 == 0 or live_mic is None:
                     reg_mic = set(apps_using("microphone"))
+                if n % 4 == 0:                   # location has no live detector: Windows' own record, every ~6 s
+                    reg_loc = set(apps_using("location"))
                 n += 1
                 cams = set(live_cam or []) | reg_cam
                 mics = set(live_mic or []) | reg_mic
-                now = (sorted(cams, key=str.lower), sorted(mics, key=str.lower))
+                now = (sorted(cams, key=str.lower), sorted(mics, key=str.lower), sorted(reg_loc, key=str.lower))
             except Exception:
-                now = ([], [])
+                now = ([], [], [])
             if now != last:
                 last = now
                 self.changed.emit(*now)
@@ -5796,38 +5896,78 @@ class PrivacyWorker(QThread):
 
 class PrivacyCard(Card):
     def __init__(self, bar, widget):
-        super().__init__(bar, width=290)
+        super().__init__(bar, width=330)
         self.w = widget
         self.rows = QVBoxLayout()
+        self.rows.setSpacing(3)
         self.body.addLayout(self.rows)
+        self.perms = QVBoxLayout()
+        self.perms.setSpacing(2)
+        self.body.addLayout(self.perms)
         btns = QHBoxLayout()
-        for text, uri in (("Camera privacy", "ms-settings:privacy-webcam"),
-                          ("Microphone privacy", "ms-settings:privacy-microphone")):
+        btns.addWidget(lbl("Settings:", "dim"))
+        for text, uri in (("Camera", "ms-settings:privacy-webcam"), ("Microphone", "ms-settings:privacy-microphone"),
+                          ("Location", "ms-settings:privacy-location")):
             b = text_button(text)
             b.clicked.connect(lambda _=False, u=uri: (self.hide(), os.startfile(u)))
             btns.addWidget(b)
+        btns.addStretch(1)
         self.body.addLayout(btns)
 
     def refresh(self):
         clear_layout(self.rows)
+        self.rows.addWidget(lbl("IN USE NOW", "section"))
         for title, apps, color in (("Camera", self.w.cams, PrivacyWidget.CAM),
-                                   ("Microphone", self.w.mics, PrivacyWidget.MIC)):
-            h = lbl(f"● {title} {'in use' if apps else 'not in use'}", "h2")
-            if apps:
-                h.setStyleSheet(f"color: {color};")
+                                   ("Microphone", self.w.mics, PrivacyWidget.MIC),
+                                   ("Location", self.w.locs, PrivacyWidget.LOC)):
+            h = lbl(f"● {title}: " + (", ".join(apps) if apps else "not in use"))
+            h.setWordWrap(True)
+            h.setStyleSheet(f"color: {color};" if apps else "")
+            if not apps:
+                h.setProperty("class", "dim")
             self.rows.addWidget(h)
-            for a in apps:
-                self.rows.addWidget(lbl("   " + a))
+        self.fill_permissions()
+
+    def fill_permissions(self):
+        """Who is allowed or blocked, and who used it recently - straight from Windows' privacy records."""
+        clear_layout(self.perms)
+        self.perms.addSpacing(6)
+        self.perms.addWidget(lbl("APP PERMISSIONS", "section"))
+        for cap, title in PRIVACY_CAPS:
+            try:
+                apps = consent_permissions(cap)
+            except Exception:
+                apps = {}
+            blocked = sorted((a for a, d in apps.items() if d["value"] == "Deny"), key=str.lower)
+            allowed = sorted((a for a, d in apps.items() if d["value"] == "Allow"), key=str.lower)
+            recent = sorted(((d["last"], a) for a, d in apps.items() if d["last"]
+                             and (utc_now() - d["last"]).days < 7), reverse=True)[:3]
+            desk = desktop_apps_switch(cap)
+            self.perms.addWidget(lbl(title, "h2"))
+            lines = []
+            if blocked:
+                lines.append(("Blocked: " + ", ".join(blocked), "#f87171"))
+            if allowed:
+                lines.append(("Allowed: " + ", ".join(allowed), None))
+            lines.append(("Desktop programs: " + ("blocked" if desk == "Deny" else "allowed"), None))
+            if recent:
+                lines.append(("Last used: " + " · ".join(f"{a} {time_ago(t)}" for t, a in recent), None))
+            for text, color in lines:
+                l = lbl("   " + text, None if color else "dim")
+                l.setWordWrap(True)
+                if color:
+                    l.setStyleSheet(f"color: {color};")
+                self.perms.addWidget(l)
 
 
 class PrivacyWidget(QWidget):
-    """Shows only while an app is using the camera or microphone (green = camera, orange = mic)."""
-    CAM, MIC = "#22c55e", "#f59e0b"
+    """Shows only while an app is using the camera, microphone or location (green / orange / blue)."""
+    CAM, MIC, LOC = "#22c55e", "#f59e0b", "#3b82f6"
 
     def __init__(self, bar):
         super().__init__()
         self.bar = bar
-        self.cams, self.mics = [], []
+        self.cams, self.mics, self.locs = [], [], []
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(36)
         self.card = PrivacyCard(bar, self)
@@ -5836,12 +5976,14 @@ class PrivacyWidget(QWidget):
         self.worker.changed.connect(self.on_change)
         self.worker.start()
 
-    def on_change(self, cams, mics):
+    def on_change(self, cams, mics, locs=()):
+        locs = list(locs)
         new = [("📷 Camera turned on", a) for a in cams if a not in self.cams] + \
-              [("🎙 Microphone turned on", a) for a in mics if a not in self.mics]
+              [("🎙 Microphone turned on", a) for a in mics if a not in self.mics] + \
+              [("📍 Location in use", a) for a in locs if a not in self.locs]
         first_run = not hasattr(self, "_seen")
         self._seen = True
-        self.cams, self.mics = cams, mics
+        self.cams, self.mics, self.locs = cams, mics, locs
         if new and not first_run and self.bar.cfg.get("alerts", {}).get("privacy", True):
             title, app = new[0]
             self.bar.toast.notify(title, f"{app} is using it." + (f"  (+{len(new) - 1} more)" if len(new) > 1 else ""),
@@ -5851,9 +5993,11 @@ class PrivacyWidget(QWidget):
             parts.append("Camera: " + ", ".join(cams))
         if mics:
             parts.append("Microphone: " + ", ".join(mics))
+        if locs:
+            parts.append("Location: " + ", ".join(locs))
         self.setToolTip("\n".join(parts))
-        self.setFixedWidth(uw(14 + 26 * (bool(cams) + bool(mics))))
-        self.setVisible(bool(cams or mics))
+        self.setFixedWidth(uw(14 + 26 * (bool(cams) + bool(mics) + bool(locs))))
+        self.setVisible(bool(cams or mics or locs))
         self.update()
         if self.card.isVisible():
             self.card.refresh()
@@ -5873,7 +6017,8 @@ class PrivacyWidget(QWidget):
         f.setPixelSize(13)
         p.setFont(f)
         x = 7.0
-        for active, glyph, color in ((self.cams, "", self.CAM), (self.mics, "", self.MIC)):
+        for active, glyph, color in ((self.cams, "", self.CAM), (self.mics, "", self.MIC),
+                                     (self.locs, "", self.LOC)):
             if not active:
                 continue
             c = QColor(color)
@@ -6223,7 +6368,7 @@ class SettingsWindow(QWidget):
         self.head("Alerts")
         al = c.get("alerts", {})
         self.alert_sec = self.check("Pop up when security protection turns off", al.get("security", True))
-        self.alert_priv = self.check("Pop up when an app turns on the camera or microphone", al.get("privacy", True))
+        self.alert_priv = self.check("Pop up when an app turns on the camera or microphone, or uses your location", al.get("privacy", True))
         self.alert_net = self.check("Pop up on open Wi-Fi or when your VPN disconnects", al.get("network", True))
         self.updates = self.check("Tell me when a new version is on GitHub (checks twice a day)",
                                   c.get("check_updates", True))
@@ -8268,8 +8413,9 @@ WIDGETS = OrderedDict([
     ("recycle", dict(name="Recycle Bin", cat="System", group="tools", attr="recycle",
                      desc="Item count. Click to open, right-click to empty.",
                      make=lambda b: RecycleBinWidget(b))),
-    ("privacy", dict(name="Camera / mic indicator", cat="Security", group=None, attr="privacy",
-                     desc="Appears while an app uses your camera or microphone, and shows which one.",
+    ("privacy", dict(name="Camera / mic / location indicator", cat="Security", group=None, attr="privacy",
+                     desc="Appears while an app uses your camera, microphone or location, and shows which one. "
+                          "Its card lists which apps are allowed or blocked.",
                      make=lambda b: PrivacyWidget(b))),
     ("media", dict(name="Now playing", cat="Media", group=None, attr="media",
                    desc="Song or video playing in any app or tab, with controls and a hover card.",
@@ -8512,7 +8658,7 @@ class WidgetColumn(QWidget):
 
 # ---- Widget gallery (right-click › Customize widgets…) ----------------------------------
 # Widgets whose preview would start something heavy or intrusive get a drawn mock-up instead
-STATIC_PREVIEWS = {"tray": "⌃  WhatsApp · Telegram · Steam…", "privacy": "🟢📷  🟠🎙  Zoom",
+STATIC_PREVIEWS = {"tray": "⌃  WhatsApp · Telegram · Steam…", "privacy": "🟢📷  🟠🎙  🔵📍  Zoom",
                    "media": "♪  Song — Artist   ⏮ ⏯ ⏭", "security": "🛡  Protected", "netguard": "🔒  VPN on"}
 SAFE_PREVIEW = {"start", "search", "workspaces", "study", "timer", "weather", "recycle", "cpu", "ram", "gpu",
                 "network", "battery", "volume", "worldclock", "clock"}

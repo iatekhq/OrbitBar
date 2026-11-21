@@ -2,6 +2,13 @@
 
 Newest first. Each `## x.y.z` section becomes the notes of that GitHub release.
 
+## 5.7.0
+
+- **Location indicator**: a blue 📍 badge appears next to the camera and microphone ones while an app uses your location, with a notification like the camera one
+- **App permissions** in the privacy card: for camera, microphone and location, which apps are allowed, which you blocked (e.g. an app you denied the camera), whether desktop programs are allowed, and who used it in the last week
+- Open it any time from the security shield → *App permissions*, even when nothing is in use
+- `--check-privacy` now lists location and every app's permission too
+
 ## 5.6.2
 
 - Clicking a desktop far away (e.g. 1 → 4) jumps straight there in one transition, instead of sliding through 2 and 3 (falls back to the old way on Windows builds that don't allow it)
