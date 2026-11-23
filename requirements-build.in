@@ -1,0 +1,5 @@
+# What the release build installs (GitHub Actions). Pinned with hashes in requirements-lock.txt:
+#   py -m pip install uv
+#   uv pip compile requirements-build.in --python-platform windows --python-version 3.12 --generate-hashes -o requirements-lock.txt
+-r requirements.txt
+pyinstaller

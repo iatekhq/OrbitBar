@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Suggest a feature
+    url: https://github.com/iatekhq/OrbitBar/discussions/new?category=ideas
+    about: Ideas go to Discussions, where others can vote on them with 👍
+  - name: Report a security problem (privately)
+    url: https://github.com/iatekhq/OrbitBar/security/advisories/new
+    about: Only IATEK sees it until it's fixed
+  - name: Ask a question
+    url: https://github.com/iatekhq/OrbitBar/discussions/new?category=q-a
+    about: How do I…? Help with setup or settings

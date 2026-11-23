@@ -1,0 +1,49 @@
+name: Report a bug
+description: Something in OrbitBar doesn't work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping make OrbitBar better! Please don't paste passwords, links with tokens in them (like calendar links), or anything else private.
+        **Found a security problem?** Don't post it here: use [Report a vulnerability](https://github.com/iatekhq/OrbitBar/security/advisories/new) so it can be fixed before anyone else sees it.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, and what went wrong?
+      placeholder: "I clicked the clock and the calendar opened off-screen."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can we make it happen again?
+      placeholder: |
+        1. Set Size of everything to Huge
+        2. Click the clock
+  - type: input
+    id: version
+    attributes:
+      label: OrbitBar version
+      description: Right-click the bar, it's in "Check for updates (you have …)"
+      placeholder: "5.7.5"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "11 (build 26100)"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log (optional)
+      description: Right-click the bar → Open log, and paste the last lines. Check it first and remove anything you don't want to share.
+      render: text

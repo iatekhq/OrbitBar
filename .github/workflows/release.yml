@@ -1,0 +1,112 @@
+# Builds OrbitBar for Windows and publishes it as a GitHub Release.
+#
+#   Publish a version:  set APP_VERSION in orbitbar.py (e.g. "5.5.0"), add a "## 5.5.0" section to
+#                       CHANGELOG.md, commit, then push a matching tag:  git tag v5.5.0 && git push origin v5.5.0
+#   Test a build only:  Actions tab -> "Build release" -> Run workflow (the zip is attached to the run, no release)
+name: Build release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Supply-chain hardening: every Action is pinned to an exact commit (a tag like @v4 can be moved to new code),
+# and every Python package to an exact version + SHA-256 (requirements-lock.txt). Dependabot proposes updates.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write          # only to publish the release
+      id-token: write          # build provenance: proves the zip was built here, from this commit
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+        with:
+          persist-credentials: false   # don't leave the token in .git for the build steps
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065   # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (exact versions, hashes checked)
+        run: python -m pip install --require-hashes --no-deps -r requirements-lock.txt
+
+      - name: Tag matches APP_VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path orbitbar.py -Pattern '^APP_VERSION = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} doesn't match APP_VERSION $v in orbitbar.py" }
+
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Smoke test (the program starts and exits)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist/OrbitBar/OrbitBar.exe -ArgumentList "--version" -PassThru
+          if (-not $p.WaitForExit(90000)) {
+            $p.Kill()
+            throw "OrbitBar.exe didn't exit: a module is probably missing from the build (run ./build.ps1 -Console locally to see the error)"
+          }
+          if ($p.ExitCode -ne 0) { throw "OrbitBar.exe --version failed with exit code $($p.ExitCode)" }
+
+      - name: Zip
+        id: zip
+        shell: pwsh
+        run: |
+          $name = "OrbitBar-${{ github.ref_name }}-windows.zip"
+          Compress-Archive -Path dist/OrbitBar -DestinationPath $name
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart("v")
+          $lines = Get-Content CHANGELOG.md
+          $start = [array]::IndexOf($lines, "## $v")
+          $notes = @()
+          if ($start -ge 0) {
+            for ($i = $start + 1; $i -lt $lines.Count -and -not $lines[$i].StartsWith("## "); $i++) { $notes += $lines[$i] }
+          }
+          if (-not ($notes -join "").Trim()) { $notes = @("See CHANGELOG.md.") }
+          $notes += @("", "**Install:** download the zip below, unzip it to a folder you'll keep, run ``OrbitBar.exe``. Full guide in the README.")
+          $notes | Set-Content notes.md
+
+      - name: Build provenance (signed record of where and how the zip was built)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6   # v4.2.2
+        with:
+          subject-path: |
+            ${{ steps.zip.outputs.name }}
+            dist/OrbitBar/OrbitBar.exe
+
+      # Created as a draft, files uploaded, then published in one step: nobody (and no auto-updater) ever
+      # sees a release without its zip, and it works with GitHub's "immutable releases" setting.
+      - name: Upload release (draft)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65   # v2.6.2
+        with:
+          name: OrbitBar ${{ github.ref_name }}
+          body_path: notes.md
+          files: ${{ steps.zip.outputs.name }}
+          draft: true
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
+
+      - name: Keep the build (manual runs)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: OrbitBar-test-build
+          path: ${{ steps.zip.outputs.name }}
